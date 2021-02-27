@@ -1,0 +1,125 @@
+version: '3.5'
+
+networks:
+  frontend:
+    driver: ${NETWORKS_DRIVER}
+
+  backend:
+    driver: ${NETWORKS_DRIVER}
+
+volumes:
+  redis:
+    driver: ${VOLUMES_DRIVER}
+  mongo:
+    driver: ${VOLUMES_DRIVER}
+  mosquitto:
+    driver: ${VOLUMES_DRIVER}
+  docker-in-docker:
+    driver: ${VOLUMES_DRIVER}
+
+services:
+### Egg Incubator #########################################
+  app:
+    build:
+      context: .
+      dockerfile: ./images/incubator/Dockerfile
+    extra_hosts:
+      - "dockerhost:${DOCKER_HOST_IP}"
+    tty: true
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}
+      - docker-in-docker:/certs/client
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    environment:
+      - WS_KEY=${WS_KEY}
+      - UPPER_BOUND_TOP=${UPPER_BOUND_TOP}
+      - UPPER_BOUND_BOTTOM=${UPPER_BOUND_BOTTOM}
+      - LOWWER_BOUND_TOP=${LOWWER_BOUND_TOP}
+      - LOWWER_BOUND_BOTTOM=${LOWWER_BOUND_BOTTOM}
+      - MAX_TEMPERATURE=${MAX_TEMPERATURE}
+      - MIN_TEMPERATURE=${MIN_TEMPERATURE}
+      - ROTATE_DELAY=${ROTATE_DELAY}
+    networks:
+      - frontend
+      - backend
+    working_dir: /var/www
+    command: ["yarn", "start"]
+    ports:
+      - "3000:3000"
+      - "9229:9229"
+    expose:
+      - "3000"  
+      - "9229"
+    links:
+      - docker-in-docker
+    depends_on: 
+      - mosquitto
+      - redis-cache
+      - mongo-db
+### Docker-in-Docker ################################################
+  docker-in-docker:
+    image: docker:19.03-dind
+    environment:
+      DOCKER_TLS_SAN: DNS:docker-in-docker
+    privileged: true
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}
+      - docker-in-docker:/certs/client
+    expose:
+      - 2375
+    networks:
+      - backend
+### MOSQUITTO Broker #########################################
+  mosquitto:
+    hostname: mosquitto
+    container_name: mosquitto
+    build:
+      context: ./images/mosquitto
+    volumes:
+      - ${DATA_PATH_HOST}/mosquitto/data:/mosquitto/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    expose:
+      - "1883"
+      - "9001"
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    networks:
+      - frontend
+      - backend
+### Redis ################################################
+  redis-cache:
+    hostname: redis-cache
+    container_name: redis-cache
+    build: ./images/redis
+    volumes:
+      - ${DATA_PATH_HOST}/redis:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    expose: 
+      - "6379"
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+### MongoDB ##############################################
+  mongo-db:
+    hostname: mongo-db
+    container_name: mongo-db
+    build: ./images/mongo
+    ports:
+      - "${MONGODB_PORT}:27017"
+    volumes:
+      - ${DATA_PATH_HOST}/mongo:/data/db
+      - ${DATA_PATH_HOST}/mongo_config:/data/configdb
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    networks:
+      - backend
+    healthcheck:
+      test: |
+        host=`hostname --ip-address || echo '127.0.0.1'`; 
+        mongo --quiet $host/test --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 2)' && echo 0 || echo 1
+      interval: 5s

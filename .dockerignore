@@ -1,0 +1,9 @@
+.idea/
+.git/
+.vscode/
+.github/
+dist/
+node_modules/
+Dockerfile
+docker-compose.yml
+pm2.json
